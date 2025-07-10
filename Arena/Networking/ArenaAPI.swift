@@ -11,6 +11,7 @@ import Defaults
 // MARK: - API Protocol
 protocol ArenaAPIProtocol: Sendable {
     func get<T: Decodable & Sendable>(_ path: String, queryItems: [URLQueryItem]?) async throws -> T
+    func search<T: Decodable & Sendable>(_ path: String, query: String, page: Int?, per: Int?) async throws -> T
 }
 
 // MARK: - API Errors
@@ -113,12 +114,25 @@ actor ArenaAPI: ArenaAPIProtocol {
             }
         }
     }
+    
+    func search<T: Decodable & Sendable>(_ path: String, query: String, page: Int? = nil, per: Int? = nil) async throws -> T {
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "q", value: encodedQuery),
+            page.map { URLQueryItem(name: "page", value: "\($0)") },
+            per.map { URLQueryItem(name: "per", value: "\($0)") }
+        ].compactMap { $0 }
+        
+        return try await get(path, queryItems: queryItems)
+    }
 }
 
 // MARK: - Convenience Extensions
 extension ArenaAPI {
     
-    /// Fetch with pagination support
+
+    
+    /// Fetch with pagination support (convenience extension)
     func get<T: Decodable & Sendable>(_ path: String, page: Int? = nil, per: Int? = nil, additionalQueryItems: [URLQueryItem]? = nil) async throws -> T {
         var queryItems: [URLQueryItem] = []
         
@@ -135,18 +149,6 @@ extension ArenaAPI {
         }
         
         return try await get(path, queryItems: queryItems.isEmpty ? nil : queryItems)
-    }
-    
-    /// Fetch with search support
-    func search<T: Decodable & Sendable>(_ path: String, query: String, page: Int? = nil, per: Int? = nil) async throws -> T {
-        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "q", value: encodedQuery),
-            page.map { URLQueryItem(name: "page", value: "\($0)") },
-            per.map { URLQueryItem(name: "per", value: "\($0)") }
-        ].compactMap { $0 }
-        
-        return try await get(path, queryItems: queryItems)
     }
 }
 
@@ -169,6 +171,15 @@ final class MockArenaAPI: ArenaAPIProtocol, @unchecked Sendable {
         }
         
         throw ArenaAPIError.noData
+    }
+    
+    func search<T: Decodable & Sendable>(_ path: String, query: String, page: Int? = nil, per: Int? = nil) async throws -> T {
+        if shouldFail {
+            throw errorToThrow
+        }
+        
+        // For mock, just return same as get() - simplified for testing
+        return try await get(path, queryItems: nil)
     }
 }
 #endif 

@@ -12,24 +12,31 @@ import Defaults
 import DebouncedOnChange
 
 struct SearchView: View {
-    @StateObject private var searchData: SearchData
-    @StateObject private var exploreData: ExploreData
+    enum ViewState {
+        case loading
+        case searchResults(ArenaSearchResults)
+        case exploreResults(ArenaExploreResults)
+        case error(String)
+        case empty
+    }
+    
+    @Environment(\.services) private var services
+    @State private var viewState: ViewState = .empty
     @FocusState private var searchInputIsFocused: Bool
     @State private var searchTerm: String = ""
     @State private var selection: String = "Blocks"
-    @State private var changedSelection: Bool = false
     @State private var isButtonFaded = false
     @State private var scrollOffset: CGFloat = 0
     @State private var showGradient = false
+    @State private var isLoadingMore = false
+    @State private var searchCurrentPage = 1
+    @State private var searchTotalPages = 1
+    @State private var exploreCurrentPage = 1
+    @State private var exploreTotalPages = 1
     
     @Default(.pinnedChannels) var pinnedChannels
     @Default(.widgetTapped) var widgetTapped
     @Default(.widgetBlockId) var widgetBlockId
-    
-    init() {
-        self._searchData = StateObject(wrappedValue: SearchData())
-        self._exploreData = StateObject(wrappedValue: ExploreData())
-    }
     
     var body: some View {
         let options = ["Blocks", "Channels", "Users"]
@@ -45,9 +52,9 @@ struct SearchView: View {
                     HStack(spacing: 12) {
                         TextField("Search...", text: $searchTerm)
                             .onChange(of: searchTerm, debounceTime: .seconds(0.5)) { newValue in
-                                searchData.searchTerm = newValue
-                                searchData.selection = selection
-                                searchData.refresh()
+                                Task {
+                                    await handleSearchChange(newValue)
+                                }
                             }
                             .textFieldStyle(SearchBarStyle())
                             .autocorrectionDisabled()
@@ -56,10 +63,8 @@ struct SearchView: View {
                             }
                             .focused($searchInputIsFocused)
                             .onSubmit {
-                                if !searchData.isLoading, searchData.searchTerm != searchTerm {
-                                    searchData.searchTerm = searchTerm
-                                    searchData.selection = selection
-                                    searchData.refresh()
+                                Task {
+                                    await handleSearchChange(searchTerm)
                                 }
                             }
                             .submitLabel(.search)
@@ -106,7 +111,214 @@ struct SearchView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
                 
-                if let searchResults = searchData.searchResults, searchTerm != "" {
+                switch viewState {
+                case .empty, .loading:
+                    if searchTerm.isEmpty {
+                        // Show explore results when no search term
+                        if case .exploreResults(let exploreResults) = viewState {
+                            exploreResultsView(exploreResults: exploreResults, gridColumns: gridColumns, gridSpacing: gridSpacing, gridItemSize: gridItemSize)
+                        } else {
+                            CircleLoadingSpinner()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                                .task {
+                                    await loadExploreResults()
+                                }
+                        }
+                    } else {
+                        CircleLoadingSpinner()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    }
+                    
+                case .error(let message):
+                    VStack(spacing: 16) {
+                        Text("Error")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text(message)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Retry") {
+                            Task {
+                                if searchTerm.isEmpty {
+                                    await loadExploreResults()
+                                } else {
+                                    await handleSearchChange(searchTerm)
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .padding()
+                    
+                case .searchResults(let searchResults):
+                    searchResultsView(searchResults: searchResults, gridColumns: gridColumns, gridSpacing: gridSpacing, gridItemSize: gridItemSize)
+                    
+                case .exploreResults(let exploreResults):
+                    if searchTerm.isEmpty {
+                        exploreResultsView(exploreResults: exploreResults, gridColumns: gridColumns, gridSpacing: gridSpacing, gridItemSize: gridItemSize)
+                    } else {
+                        CircleLoadingSpinner()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    }
+                }
+            }
+            .padding(.bottom, 4)
+            .onChange(of: selection) { oldSelection, newSelection in
+                Task {
+                    if searchTerm.isEmpty {
+                        await loadExploreResults()
+                    } else {
+                        await handleSearchChange(searchTerm)
+                    }
+                }
+            }
+            .task {
+                await loadExploreResults()
+            }
+            .navigationDestination(isPresented: $widgetTapped) {
+                HistorySingleBlockView(blockId: widgetBlockId)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .background(Color("background"))
+        .contentMargins(.leading, 0, for: .scrollIndicators)
+        .contentMargins(.horizontal, 16)
+        .contentMargins(.bottom, 16)
+    }
+    
+    // MARK: - Private Methods
+    
+    private func handleSearchChange(_ term: String) async {
+        if term.isEmpty {
+            await loadExploreResults()
+        } else {
+            await searchResults(term: term)
+        }
+    }
+    
+    private func searchResults(term: String) async {
+        searchCurrentPage = 1
+        searchTotalPages = 1
+        await fetchSearchResults(term: term, isRefresh: true)
+    }
+    
+    private func loadExploreResults() async {
+        exploreCurrentPage = 1
+        exploreTotalPages = 1
+        await fetchExploreResults(isRefresh: true)
+    }
+    
+    private func loadMoreSearch() async {
+        guard searchCurrentPage <= searchTotalPages, !isLoadingMore else { return }
+        isLoadingMore = true
+        await fetchSearchResults(term: searchTerm, isRefresh: false)
+        isLoadingMore = false
+    }
+    
+    private func loadMoreExplore() async {
+        guard exploreCurrentPage <= exploreTotalPages, !isLoadingMore else { return }
+        isLoadingMore = true
+        await fetchExploreResults(isRefresh: false)
+        isLoadingMore = false
+    }
+    
+    private func fetchSearchResults(term: String, isRefresh: Bool) async {
+        guard searchCurrentPage <= searchTotalPages else { return }
+        
+        if isRefresh {
+            viewState = .loading
+        }
+        
+        let searchPath: String = switch selection {
+        case "Channels": "/search/channels"
+        case "Blocks": "/search/blocks"
+        case "Users": "/search/users"
+        default: "/search/blocks"
+        }
+        
+        do {
+            let results: ArenaSearchResults = try await services.api.search(searchPath, query: term, page: searchCurrentPage, per: 20)
+            
+            if isRefresh {
+                viewState = .searchResults(results)
+            } else {
+                // Append to existing results for pagination
+                if case .searchResults(let existingResults) = viewState {
+                    let updatedResults = ArenaSearchResults(
+                        currentPage: results.currentPage,
+                        totalPages: results.totalPages,
+                        channels: existingResults.channels + results.channels,
+                        blocks: existingResults.blocks + results.blocks,
+                        users: existingResults.users + results.users
+                    )
+                    viewState = .searchResults(updatedResults)
+                } else {
+                    viewState = .searchResults(results)
+                }
+            }
+            
+            searchTotalPages = results.totalPages
+            searchCurrentPage += 1
+            
+        } catch {
+            viewState = .error(error.localizedDescription)
+        }
+    }
+    
+    private func fetchExploreResults(isRefresh: Bool) async {
+        guard exploreCurrentPage <= exploreTotalPages else { return }
+        
+        if isRefresh {
+            viewState = .loading
+        }
+        
+        let option: String = switch selection {
+        case "Channels": "channels"
+        case "Blocks": "blocks"
+        case "Users": "users"
+        default: "blocks"
+        }
+        
+        do {
+            let queryItems = [
+                URLQueryItem(name: "sort", value: "random"),
+                URLQueryItem(name: "filter", value: option),
+                URLQueryItem(name: "per", value: "20"),
+                URLQueryItem(name: "page", value: "\(exploreCurrentPage)")
+            ]
+            
+            let results: ArenaExploreResults = try await services.api.get("/search/explore", queryItems: queryItems)
+            
+            if isRefresh {
+                viewState = .exploreResults(results)
+            } else {
+                // Append to existing results for pagination
+                if case .exploreResults(let existingResults) = viewState {
+                    let updatedResults = ArenaExploreResults(
+                        currentPage: results.currentPage,
+                        totalPages: results.totalPages,
+                        channels: existingResults.channels + results.channels,
+                        blocks: existingResults.blocks + results.blocks,
+                        users: existingResults.users + results.users
+                    )
+                    viewState = .exploreResults(updatedResults)
+                } else {
+                    viewState = .exploreResults(results)
+                }
+            }
+            
+            exploreTotalPages = results.totalPages
+            exploreCurrentPage += 1
+            
+        } catch {
+            viewState = .error(error.localizedDescription)
+        }
+    }
+    
+    @ViewBuilder
+    private func searchResultsView(searchResults: ArenaSearchResults, gridColumns: [GridItem], gridSpacing: CGFloat, gridItemSize: CGFloat) -> some View {
                     ZStack {
                         ScrollView {
                             ScrollViewReader { proxy in
@@ -143,7 +355,9 @@ struct SearchView: View {
                                                 .onAppear {
                                                     if searchResults.blocks.count >= 8 {
                                                         if searchResults.blocks[searchResults.blocks.count - 8].id == block.id {
-                                                            searchData.loadMore()
+                                                            Task {
+                                                                await loadMoreSearch()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -162,8 +376,10 @@ struct SearchView: View {
                                                 }
                                                 .onAppear {
                                                     if searchResults.channels.last?.id ?? -1 == channel.id {
-                                                        if !searchData.isLoading {
-                                                            searchData.loadMore()
+                                                        if !isLoadingMore {
+                                                            Task {
+                                                                await loadMoreSearch()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -182,8 +398,10 @@ struct SearchView: View {
                                                 }
                                                 .onAppear {
                                                     if searchResults.users.last?.id ?? -1 == user.id {
-                                                        if !searchData.isLoading {
-                                                            searchData.loadMore()
+                                                        if !isLoadingMore {
+                                                            Task {
+                                                                await loadMoreSearch()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -196,29 +414,28 @@ struct SearchView: View {
                                 }
                             }
                             
-                            if searchData.isLoading, searchTerm != "" {
+                            if isLoadingMore, searchTerm != "" {
                                 CircleLoadingSpinner()
                                     .padding(.vertical, 12)
                             }
                             
-                            if selection == "Channels", searchResults.channels.isEmpty, !searchData.isLoading {
-                                EmptySearch(items: "channels", searchTerm: searchData.searchTerm)
-                            } else if selection == "Blocks", searchResults.blocks.isEmpty, !searchData.isLoading {
-                                EmptySearch(items: "blocks", searchTerm: searchData.searchTerm)
-                            } else if selection == "Users", searchResults.users.isEmpty, !searchData.isLoading {
-                                EmptySearch(items: "users", searchTerm: searchData.searchTerm)
-                            } else if searchData.currentPage > searchData.totalPages, searchTerm != "" {
+                            if selection == "Channels", searchResults.channels.isEmpty, !isLoadingMore {
+                                EmptySearch(items: "channels", searchTerm: searchTerm)
+                            } else if selection == "Blocks", searchResults.blocks.isEmpty, !isLoadingMore {
+                                EmptySearch(items: "blocks", searchTerm: searchTerm)
+                            } else if selection == "Users", searchResults.users.isEmpty, !isLoadingMore {
+                                EmptySearch(items: "users", searchTerm: searchTerm)
+                            } else if searchCurrentPage > searchTotalPages, searchTerm != "" {
                                 EndOfSearch()
                             }
                         }
                         .scrollDismissesKeyboard(.immediately)
                         .coordinateSpace(name: "scroll")
                     }
-                } else if searchData.isLoading, searchTerm != "" {
-                    CircleLoadingSpinner()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                } else {
-                    if let exploreResults = exploreData.exploreResults {
+    }
+    
+    @ViewBuilder
+    private func exploreResultsView(exploreResults: ArenaExploreResults, gridColumns: [GridItem], gridSpacing: CGFloat, gridItemSize: CGFloat) -> some View {
                         ScrollView {
                             ScrollViewReader { proxy in
                                 if selection == "Blocks" {
@@ -248,7 +465,9 @@ struct SearchView: View {
                                                 .onAppear {
                                                     if exploreResults.blocks.count >= 8 {
                                                         if exploreResults.blocks[exploreResults.blocks.count - 8].id == block.id {
-                                                            exploreData.loadMore()
+                                                            Task {
+                                                                await loadMoreExplore()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -268,7 +487,9 @@ struct SearchView: View {
                                                 .onAppear {
                                                     if exploreResults.channels.count >= 8 {
                                                         if exploreResults.channels[exploreResults.channels.count - 8].id == channel.id {
-                                                            exploreData.loadMore()
+                                                            Task {
+                                                                await loadMoreExplore()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -288,7 +509,9 @@ struct SearchView: View {
                                                 .onAppear {
                                                     if exploreResults.users.count >= 8 {
                                                         if exploreResults.users[exploreResults.users.count - 8].id == user.id {
-                                                            exploreData.loadMore()
+                                                            Task {
+                                                                await loadMoreExplore()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -300,7 +523,7 @@ struct SearchView: View {
                                     }
                                 }
                                 
-                                if exploreData.isLoading {
+                                if isLoadingMore {
                                     CircleLoadingSpinner()
                                         .padding(.top, 16)
                                         .padding(.bottom, 12)
@@ -308,41 +531,10 @@ struct SearchView: View {
                             }
                         }
                         .refreshable {
-                            do { try await Task.sleep(nanoseconds: 500_000_000) } catch {}
-                            exploreData.refresh()
+                            await loadExploreResults()
                         }
                         .scrollDismissesKeyboard(.immediately)
                         .coordinateSpace(name: "explore-scroll")
-                        
-                    } else if exploreData.isLoading {
-                        CircleLoadingSpinner()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    }
-                }
-            }
-            .padding(.bottom, 4)
-            .onChange(of: selection, initial: true) { oldSelection, newSelection in
-                if oldSelection != newSelection {
-                    if searchTerm != "" {
-                        searchData.selection = newSelection
-                        searchData.isLoading = false
-                        searchData.refresh()
-                    } else {
-                        exploreData.selection = newSelection
-                        exploreData.isLoading = false
-                        exploreData.refresh()
-                    }
-                }
-            }
-            .navigationDestination(isPresented: $widgetTapped) {
-                HistorySingleBlockView(blockId: widgetBlockId)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .background(Color("background"))
-        .contentMargins(.leading, 0, for: .scrollIndicators)
-        .contentMargins(.horizontal, 16)
-        .contentMargins(.bottom, 16)
     }
 }
 
@@ -420,4 +612,5 @@ struct SearchChannelPreview: View {
 
 #Preview {
     SearchView()
+        .environment(\.services, AppServices.previewMock)
 }

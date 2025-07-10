@@ -10,10 +10,12 @@ import Defaults
 
 struct ConnectNewView: View {
     @StateObject var channelsData: ChannelsData
-    @StateObject private var channelSearchData: SearchData
+    @Environment(\.services) private var services
     @FocusState private var searchInputIsFocused: Bool
     
     @State private var searchTerm: String = ""
+    @State private var searchResults: ArenaSearchResults?
+    @State private var isLoading = false
     @State private var selection: String = "Channels"
     @State private var channelsToConnect: [String] = []
     @State private var isConnecting: Bool = false
@@ -27,7 +29,6 @@ struct ConnectNewView: View {
     @Environment(\.dismiss) private var dismiss
     
     init(imageData: Binding<[Data]>, textData: Binding<String>, linkData: Binding<[String]>, titleData: Binding<[String]>, descriptionData: Binding<[String]>) {
-        self._channelSearchData = StateObject(wrappedValue: SearchData())
         self._channelsData = StateObject(wrappedValue: ChannelsData(userId: Defaults[.userId]))
         self._imageData = imageData
         self._textData = textData
@@ -44,12 +45,12 @@ struct ConnectNewView: View {
             HStack(spacing: 12) {
                 TextField("Search...", text: $searchTerm)
                     .onChange(of: searchTerm, debounceTime: .seconds(0.5)) { newValue in
-                        channelSearchData.selection = "Channels"
-                        if newValue == "" {
-                            channelSearchData.searchResults = nil
-                        } else {
-                            channelSearchData.searchTerm = newValue
-                            channelSearchData.refresh()
+                        Task {
+                            if newValue.isEmpty {
+                                searchResults = nil
+                            } else {
+                                await searchChannels(query: newValue)
+                            }
                         }
                     }
                     .multilineTextAlignment(.leading)
@@ -60,10 +61,8 @@ struct ConnectNewView: View {
                     }
                     .focused($searchInputIsFocused)
                     .onSubmit {
-                        if !channelSearchData.isLoading, searchTerm != channelSearchData.searchTerm {
-                            channelSearchData.selection = "Channels"
-                            channelSearchData.searchTerm = searchTerm
-                            channelSearchData.refresh()
+                        Task {
+                            await searchChannels(query: searchTerm)
                         }
                     }
                     .submitLabel(.search)
@@ -131,7 +130,7 @@ struct ConnectNewView: View {
             // List of channels
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if let searchResults = channelSearchData.searchResults, searchTerm != "" {
+                    if let searchResults = searchResults, searchTerm != "" {
                         ForEach(searchResults.channels, id: \.id) { channel in
                             Button(action: {
                                 searchInputIsFocused = false
@@ -150,27 +149,21 @@ struct ConnectNewView: View {
                                     )
                                     .padding(.bottom, 8)
                                     .onBecomingVisible {
-                                        if searchResults.channels.last?.id ?? -1 == channel.id {
-                                            if !channelSearchData.isLoading {
-                                                channelSearchData.loadMore()
-                                            }
-                                        }
+                                        // Note: Simplified - removed pagination for connect view
                                     }
                             }
                             .buttonStyle(ConnectChannelButtonStyle())
                         }
                         
-                        if channelSearchData.isLoading, searchTerm != "" {
+                        if isLoading, searchTerm != "" {
                             CircleLoadingSpinner()
                                 .padding(.vertical, 12)
                         }
                         
                         if searchResults.channels.isEmpty {
-                            EmptySearch(items: "channels", searchTerm: channelSearchData.searchTerm)
-                        } else if channelSearchData.currentPage > channelSearchData.totalPages, searchTerm != "" {
-                            EndOfSearch()
+                            EmptySearch(items: "channels", searchTerm: searchTerm)
                         }
-                    } else if channelSearchData.isLoading, searchTerm != "" {
+                    } else if isLoading, searchTerm != "" {
                         CircleLoadingSpinner()
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                             .padding(.top, 64)
@@ -237,5 +230,19 @@ struct ConnectNewView: View {
         }
         .toolbarBackground(Color("background"), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+    }
+    
+    private func searchChannels(query: String) async {
+        isLoading = true
+        
+        do {
+            let results: ArenaSearchResults = try await services.api.search("/search/channels", query: query, page: 1, per: 20)
+            searchResults = results
+        } catch {
+            print("Search error: \(error)")
+            searchResults = nil
+        }
+        
+        isLoading = false
     }
 }

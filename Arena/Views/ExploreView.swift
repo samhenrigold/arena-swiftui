@@ -18,16 +18,21 @@ enum Selection: String, CaseIterable, Sendable {
 }
 
 struct ExploreView: View {
-    @StateObject private var exploreData: ExploreData
+    enum ViewState {
+        case loading
+        case loaded(ArenaExploreResults)
+        case error(String)
+    }
+    
+    @Environment(\.services) private var services
+    @State private var viewState: ViewState = .loading
     @State private var selection = Selection.blocks
-    @State private var changedSelection: Bool = false
+    @State private var currentPage = 1
+    @State private var totalPages = 1
+    @State private var isLoadingMore = false
     let selectionOptions = Selection.allCases
     
     @Default(.pinnedChannels) var pinnedChannels
-    
-    init() {
-        self._exploreData = StateObject(wrappedValue: ExploreData())
-    }
     
     var selectionLabel: some View {
         switch selection {
@@ -61,7 +66,34 @@ struct ExploreView: View {
         
         NavigationStack {
             VStack {
-                if let exploreResults = exploreData.exploreResults {
+                switch viewState {
+                case .loading:
+                    CircleLoadingSpinner()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .task {
+                            await load()
+                        }
+                        
+                case .error(let message):
+                    VStack(spacing: 16) {
+                        Text("Error loading explore results")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text(message)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Retry") {
+                            Task {
+                                await load()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .padding()
+                    
+                case .loaded(let exploreResults):
                     ScrollView {
                         if selection.rawValue == "Blocks" {
                             LazyVGrid(columns: gridColumns, spacing: gridSpacing) {
@@ -90,7 +122,9 @@ struct ExploreView: View {
                                         .onAppear {
                                             if exploreResults.blocks.count >= 8 {
                                                 if exploreResults.blocks[exploreResults.blocks.count - 8].id == block.id {
-                                                    exploreData.loadMore()
+                                                    Task {
+                                                        await loadMore()
+                                                    }
                                                 }
                                             }
                                         }
@@ -110,7 +144,9 @@ struct ExploreView: View {
                                         .onAppear {
                                             if exploreResults.channels.count >= 8 {
                                                 if exploreResults.channels[exploreResults.channels.count - 8].id == channel.id {
-                                                    exploreData.loadMore()
+                                                    Task {
+                                                        await loadMore()
+                                                    }
                                                 }
                                             }
                                         }
@@ -130,7 +166,9 @@ struct ExploreView: View {
                                         .onAppear {
                                             if exploreResults.users.count >= 8 {
                                                 if exploreResults.users[exploreResults.users.count - 8].id == user.id {
-                                                    exploreData.loadMore()
+                                                    Task {
+                                                        await loadMore()
+                                                    }
                                                 }
                                             }
                                         }
@@ -142,7 +180,7 @@ struct ExploreView: View {
                             }
                         }
                         
-                        if exploreData.isLoading {
+                        if isLoadingMore {
                             CircleLoadingSpinner()
                                 .padding(.top, 16)
                                 .padding(.bottom, 12)
@@ -150,20 +188,16 @@ struct ExploreView: View {
                     }
                     .scrollDismissesKeyboard(.immediately)
                     .coordinateSpace(name: "scroll")
-                } else if exploreData.isLoading {
-                    CircleLoadingSpinner()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
             }
             .refreshable {
-                do { try await Task.sleep(nanoseconds: 500_000_000) } catch {}
-                exploreData.refresh()
+                await refresh()
             }
-            .onChange(of: selection, initial: true) { oldSelection, newSelection in
+            .onChange(of: selection) { oldSelection, newSelection in
                 if oldSelection != newSelection {
-                    exploreData.selection = newSelection.rawValue
-                    exploreData.isLoading = false
-                    exploreData.refresh()
+                    Task {
+                        await refresh()
+                    }
                 }
             }
             .padding(.bottom, 4)
@@ -199,8 +233,74 @@ struct ExploreView: View {
         .contentMargins(.leading, 0, for: .scrollIndicators)
         .contentMargins(selection.rawValue == "Blocks" ? 8 : 16)
     }
+    
+    // MARK: - Private Methods
+    
+    private func load() async {
+        viewState = .loading
+        await fetchExploreResults(isRefresh: true)
+    }
+    
+    private func refresh() async {
+        currentPage = 1
+        totalPages = 1
+        await fetchExploreResults(isRefresh: true)
+    }
+    
+    private func loadMore() async {
+        guard currentPage <= totalPages, !isLoadingMore else { return }
+        isLoadingMore = true
+        await fetchExploreResults(isRefresh: false)
+        isLoadingMore = false
+    }
+    
+    private func fetchExploreResults(isRefresh: Bool) async {
+        guard currentPage <= totalPages else { return }
+        
+        let option: String = switch selection {
+        case .channels: "channels"
+        case .blocks: "blocks"
+        case .users: "users"
+        }
+        
+        do {
+            let queryItems = [
+                URLQueryItem(name: "sort", value: "random"),
+                URLQueryItem(name: "filter", value: option),
+                URLQueryItem(name: "per", value: "20"),
+                URLQueryItem(name: "page", value: "\(currentPage)")
+            ]
+            
+            let results: ArenaExploreResults = try await services.api.get("/search/explore", queryItems: queryItems)
+            
+            if isRefresh {
+                viewState = .loaded(results)
+            } else {
+                // Append to existing results for pagination
+                if case .loaded(let existingResults) = viewState {
+                    let updatedResults = ArenaExploreResults(
+                        currentPage: results.currentPage,
+                        totalPages: results.totalPages,
+                        channels: existingResults.channels + results.channels,
+                        blocks: existingResults.blocks + results.blocks,
+                        users: existingResults.users + results.users
+                    )
+                    viewState = .loaded(updatedResults)
+                } else {
+                    viewState = .loaded(results)
+                }
+            }
+            
+            totalPages = results.totalPages
+            currentPage += 1
+            
+        } catch {
+            viewState = .error(error.localizedDescription)
+        }
+    }
 }
 
 #Preview {
     ExploreView()
+        .environment(\.services, AppServices.previewMock)
 }
