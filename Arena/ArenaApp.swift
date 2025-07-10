@@ -63,6 +63,7 @@ struct ArenaApp: App {
         WindowGroup {
             if onboardingDone {
                 ArenaView()
+                    .environment(\.services, AppServices.live)
                     .preferredColorScheme(selectedAppearance == 0 ? nil : selectedAppearance == 1 ? .light : .dark)
                     .sheet(isPresented: $connectSheetOpen) {
                         ConnectExistingView()
@@ -97,6 +98,7 @@ struct ArenaApp: App {
                     }
             } else {
                 OnboardingView()
+                    .environment(\.services, AppServices.live)
                     .preferredColorScheme(selectedAppearance == 0 ? nil : selectedAppearance == 1 ? .light : .dark)
                     .safariView(isPresented: $safariViewOpen) {
                         SafariView(
