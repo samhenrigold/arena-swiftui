@@ -30,6 +30,7 @@
 		8FF0C5BF2AD89C3D007D5959 /* ArenaUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF0C5BE2AD89C3D007D5959 /* ArenaUITestsLaunchTests.swift */; };
 		8FF2954E2B03311B008520BD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 8FF2954D2B03311B008520BD /* NukeUI */; };
 		8FF6EFC32AF8953E00A58631 /* BetterSafariView in Frameworks */ = {isa = PBXBuildFile; productRef = 8FF6EFC22AF8953E00A58631 /* BetterSafariView */; };
+		EA725AD32E20568800411759 /* ArenaAPITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA725AD22E20568800411759 /* ArenaAPITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -87,6 +88,7 @@
 		8FF0C5B82AD89C3D007D5959 /* ArenaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ArenaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8FF0C5BC2AD89C3D007D5959 /* ArenaUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArenaUITests.swift; sourceTree = "<group>"; };
 		8FF0C5BE2AD89C3D007D5959 /* ArenaUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArenaUITestsLaunchTests.swift; sourceTree = "<group>"; };
+		EA725AD22E20568800411759 /* ArenaAPITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArenaAPITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -207,6 +209,7 @@
 			isa = PBXGroup;
 			children = (
 				8FF0C5B22AD89C3D007D5959 /* ArenaTests.swift */,
+				EA725AD22E20568800411759 /* ArenaAPITests.swift */,
 			);
 			path = ArenaTests;
 			sourceTree = "<group>";
@@ -428,6 +431,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EA725AD32E20568800411759 /* ArenaAPITests.swift in Sources */,
 				8FF0C5B32AD89C3D007D5959 /* ArenaTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -476,7 +480,7 @@
 				INFOPLIST_FILE = BlockWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = BlockWidget;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -509,7 +513,7 @@
 				INFOPLIST_FILE = BlockWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = BlockWidget;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -746,7 +750,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Are:na";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yihuihu.ArenaTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -766,7 +770,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Are:na";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yihuihu.ArenaTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -785,6 +789,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Are:na";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yihuihu.ArenaUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -803,6 +808,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Are:na";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yihuihu.ArenaUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

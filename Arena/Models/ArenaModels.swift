@@ -9,7 +9,7 @@ import Foundation
 import SwiftUI
 
 // MARK: - ArenaChannels
-final class ArenaChannels: Codable {
+final class ArenaChannels: Codable, @unchecked Sendable {
     let id: Int // id of user
     let length, totalPages, currentPage: Int
     var channels: ContiguousArray<ArenaChannelPreview>
@@ -32,7 +32,7 @@ final class ArenaChannels: Codable {
 }
 
 // MARK: - ArenaChannelPreview
-final class ArenaChannelPreview: Codable {
+final class ArenaChannelPreview: Codable, @unchecked Sendable {
     let id: Int
     let title, createdAt, updatedAt, addedToAt: String
     let published, channelOpen, collaboration: Bool
@@ -95,7 +95,7 @@ final class ArenaChannelPreview: Codable {
 }
 
 // MARK: - ArenaChannel
-final class ArenaChannel: Codable, Equatable {
+final class ArenaChannel: Codable, Equatable, @unchecked Sendable {
     static func == (lhs: ArenaChannel, rhs: ArenaChannel) -> Bool {
         return lhs.id == rhs.id // Compare using a unique identifier, such as the 'id' property
     }
@@ -170,12 +170,12 @@ final class ArenaChannel: Codable, Equatable {
 }
 
 // MARK: - ArenaChannelContents
-final class ArenaChannelContents: Codable {
+final class ArenaChannelContents: Codable, @unchecked Sendable {
     let contents: [Block]?
 }
 
 // MARK: - ArenaSearchResults
-final class ArenaSearchResults: Codable {
+final class ArenaSearchResults: Codable, @unchecked Sendable {
     let currentPage, totalPages: Int
     var channels: [ArenaSearchedChannel]
     var blocks: [Block]
@@ -197,7 +197,7 @@ final class ArenaSearchResults: Codable {
 }
 
 // MARK: - ArenaSearchedChannel
-final class ArenaSearchedChannel: Codable, Equatable {
+final class ArenaSearchedChannel: Codable, Equatable, @unchecked Sendable {
     static func == (lhs: ArenaSearchedChannel, rhs: ArenaSearchedChannel) -> Bool {
         return lhs.id == rhs.id // Compare using a unique identifier, such as the 'id' property
     }
@@ -243,7 +243,7 @@ final class ArenaSearchedChannel: Codable, Equatable {
 }
 
 // MARK: - Block
-final class Block: Hashable, Codable, ObservableObject, Equatable {
+final class Block: Hashable, Codable, ObservableObject, Equatable, @unchecked Sendable {
     static func == (lhs: Block, rhs: Block) -> Bool {
         return lhs.id == rhs.id // Compare using a unique identifier, such as the 'id' property
     }
@@ -336,12 +336,12 @@ final class Block: Hashable, Codable, ObservableObject, Equatable {
 }
 
 // MARK: - BlockConnections
-final class BlockConnections: Codable {
+final class BlockConnections: Codable, @unchecked Sendable {
     let connections: [BlockConnection]
 }
 
 // MARK: - BlockConnection
-final class BlockConnection: Identifiable, Codable {
+final class BlockConnection: Identifiable, Codable, @unchecked Sendable {
     let id: Int
     let title: String
     let updatedAt, createdAt: String // describes when block was updated and created
@@ -363,7 +363,7 @@ final class BlockConnection: Identifiable, Codable {
 }
 
 // MARK: - ArenaAttachment
-final class ArenaAttachment: Codable {
+final class ArenaAttachment: Codable, @unchecked Sendable {
     let filename, fileSizeDisplay, fileExtension, contentType, url: String
     let fileSize: Int
     
@@ -387,7 +387,7 @@ final class ArenaAttachment: Codable {
 }
 
 // MARK: - Image
-final class ArenaImage: Codable {
+final class ArenaImage: Codable, @unchecked Sendable {
     let filename, contentType, updatedAt: String
     let thumb, square, display, large: Display
     let original: OriginalImage
@@ -412,12 +412,12 @@ final class ArenaImage: Codable {
 }
 
 // MARK: - Display
-struct Display: Codable {
+struct Display: Codable, Sendable {
     let url: String
 }
 
 // MARK: - Original
-final class OriginalImage: Codable {
+final class OriginalImage: Codable, @unchecked Sendable {
     let url: String
     let fileSize: Int
     let fileSizeDisplay: String
@@ -436,7 +436,7 @@ final class OriginalImage: Codable {
 }
 
 // MARK: - Metadata
-final class Metadata: Codable {
+final class Metadata: Codable, @unchecked Sendable {
     let description: String?
     
     init(description: String?) {
@@ -445,7 +445,7 @@ final class Metadata: Codable {
 }
 
 // MARK: - Source
-final class ArenaSource: Codable {
+final class ArenaSource: Codable, @unchecked Sendable {
     let url: String?
     let title: String?
     
@@ -456,7 +456,7 @@ final class ArenaSource: Codable {
 }
 
 // MARK: - User
-final class User: Codable, Equatable {
+final class User: Codable, Equatable, @unchecked Sendable {
     static func == (lhs: User, rhs: User) -> Bool {
         return lhs.id == rhs.id // Compare using a unique identifier, such as the 'id' property
     }
@@ -504,7 +504,7 @@ final class User: Codable, Equatable {
 }
 
 // MARK: - AvatarImage
-final class AvatarImage: Codable {
+final class AvatarImage: Codable, @unchecked Sendable {
     let thumb, display: String
     
     init(thumb: String, display: String) {
@@ -514,7 +514,7 @@ final class AvatarImage: Codable {
 }
 
 // MARK: - Block Comments
-final class BlockComments: Codable {
+final class BlockComments: Codable, @unchecked Sendable {
     let comments: [BlockComment]
     let length: Int
     
@@ -529,7 +529,7 @@ final class BlockComments: Codable {
 }
 
 // MARK: - Singular Block Comment
-final class BlockComment: Codable {
+final class BlockComment: Codable, @unchecked Sendable {
     let id: Int
     let createdAt, updatedAt: String
     let commentableId: Int
@@ -564,7 +564,7 @@ final class BlockComment: Codable {
 }
 
 //MARK: - Followers data
-final class ArenaFollowers: Codable {
+final class ArenaFollowers: Codable, @unchecked Sendable {
     let length, currentPage, totalPages: Int
     var users: [User]
     
@@ -608,7 +608,7 @@ final class ArenaFollowers: Codable {
 //}
 
 //MARK: - Following data
-final class ArenaFollowing: Decodable {
+final class ArenaFollowing: Decodable, @unchecked Sendable {
     let length, currentPage: Int
     var users: [User]
     
@@ -625,7 +625,7 @@ final class ArenaFollowing: Decodable {
 }
 
 // MARK: - ArenaExploreResults
-final class ArenaExploreResults: Codable {
+final class ArenaExploreResults: Codable, @unchecked Sendable {
     let currentPage, totalPages: Int
     var channels: [ArenaSearchedChannel]
     var blocks: [Block]
@@ -647,7 +647,7 @@ final class ArenaExploreResults: Codable {
 }
 
 // MARK: - ChannelConnections
-final class ChannelConnections: Codable {
+final class ChannelConnections: Codable, @unchecked Sendable {
     let currentPage, totalPages: Int
     var channels: [ArenaSearchedChannel]
     
