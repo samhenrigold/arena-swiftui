@@ -11,7 +11,7 @@ import NukeUI
 import Defaults
 import UniformTypeIdentifiers
 
-enum Selection: String, CaseIterable {
+enum Selection: String, CaseIterable, Sendable {
     case blocks = "Blocks"
     case channels = "Channels"
     case users = "Users"

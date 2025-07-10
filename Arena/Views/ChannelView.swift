@@ -10,20 +10,20 @@ import WrappingHStack
 import Defaults
 import UniformTypeIdentifiers
 
-enum SortOption: String, CaseIterable {
+enum SortOption: String, CaseIterable, Sendable {
     case position = "Position"
     case newest = "Newest First"
     case oldest = "Oldest First"
 }
 
-enum DisplayOption: String, CaseIterable {
+enum DisplayOption: String, CaseIterable, Sendable {
     case grid = "Grid"
     case largeGrid = "Large Grid"
     case feed = "Feed"
     case table = "Table"
 }
 
-enum ContentOption: String, CaseIterable {
+enum ContentOption: String, CaseIterable, Sendable {
     case all = "All"
     //    case blocks = "Blocks"
     //    case channels = "Channels"

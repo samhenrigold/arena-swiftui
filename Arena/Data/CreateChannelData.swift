@@ -8,7 +8,7 @@
 import Foundation
 import Defaults
 
-enum CreateChannelResult {
+enum CreateChannelResult: Sendable {
     case success(channelSlug: String)
     case failure(error: String)
 }
