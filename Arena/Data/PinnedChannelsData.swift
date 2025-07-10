@@ -52,13 +52,17 @@ final class PinnedChannelsData: ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(Defaults[.accessToken])", forHTTPHeaderField: "Authorization")
             
-            let task = URLSession.shared.dataTask(with: request) { [unowned self] (data, response, error) in
+            let task = URLSession.shared.dataTask(with: request) { [weak self] (data, response, error) in
                 defer {
                     dispatchGroup.leave()
                 }
 
+                guard let self = self else { return }
+
                 guard error == nil else {
-                    errorMessage = "Error retrieving data: \(error!.localizedDescription)"
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Error retrieving data: \(error!.localizedDescription)"
+                    }
                     return
                 }
 
@@ -72,7 +76,9 @@ final class PinnedChannelsData: ObservableObject {
                     updatedChannels.append(channelContent)
                 } catch let decodingError {
                     print("Decoding Error: \(decodingError)")
-                    errorMessage = "Error decoding data: \(decodingError.localizedDescription)"
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Error decoding data: \(decodingError.localizedDescription)"
+                    }
                 }
             }
 

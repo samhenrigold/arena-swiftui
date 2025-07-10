@@ -24,7 +24,12 @@ class BlockConnectionsData: ObservableObject {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(Defaults[.accessToken])", forHTTPHeaderField: "Authorization")
         
-        URLSession.shared.dataTask(with: request) { [unowned self] (data, _, error) in
+        URLSession.shared.dataTask(with: request) { [weak self] (data, _, error) in
+            guard let self = self else { 
+                completion(false)
+                return 
+            }
+            
             if let data = data {
                 do {
                     let blockConnections = try JSONDecoder().decode(BlockConnections.self, from: data)
@@ -35,13 +40,17 @@ class BlockConnectionsData: ObservableObject {
                     }
                 } catch {
                     print("Error decoding connections data: \(error)")
-                    completion(false)
-                    self.isLoading = false
+                    DispatchQueue.main.async {
+                        completion(false)
+                        self.isLoading = false
+                    }
                 }
             } else if let error = error {
                 print("Error fetching connections: \(error)")
-                completion(false)
-                self.isLoading = false
+                DispatchQueue.main.async {
+                    completion(false)
+                    self.isLoading = false
+                }
             }
         }.resume()
     }
@@ -71,7 +80,12 @@ class BlockCommentsData: ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("Bearer \(Defaults[.accessToken])", forHTTPHeaderField: "Authorization")
             
-            URLSession.shared.dataTask(with: request) { [unowned self] (data, _, error) in
+            URLSession.shared.dataTask(with: request) { [weak self] (data, _, error) in
+                guard let self = self else { 
+                    completion(false)
+                    return 
+                }
+                
                 if let data = data {
                     do {
                         let blockComments = try JSONDecoder().decode(BlockComments.self, from: data)
@@ -90,13 +104,17 @@ class BlockCommentsData: ObservableObject {
                         }
                     } catch {
                         print("Error decoding comments data: \(error)")
-                        completion(false)
-                        self.isLoading = false
+                        DispatchQueue.main.async {
+                            completion(false)
+                            self.isLoading = false
+                        }
                     }
                 } else if let error = error {
                     print("Error fetching comments: \(error)")
-                    completion(false)
-                    self.isLoading = false
+                    DispatchQueue.main.async {
+                        completion(false)
+                        self.isLoading = false
+                    }
                 }
             }.resume()
         }

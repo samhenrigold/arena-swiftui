@@ -87,9 +87,14 @@ final class SearchData: ObservableObject {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(Defaults[.accessToken])", forHTTPHeaderField: "Authorization")
         
-        let task = URLSession.shared.dataTask(with: request) { [unowned self] (data, response, error) in
+        let task = URLSession.shared.dataTask(with: request) { [weak self] (data, response, error) in
+            guard let self = self else { return }
+            
             if error != nil {
-                errorMessage = "Error retrieving data."
+                DispatchQueue.main.async {
+                    self.errorMessage = "Error retrieving data."
+                    self.isLoading = false
+                }
                 return
             }
             
@@ -108,17 +113,21 @@ final class SearchData: ObservableObject {
                         }
                         self.totalPages = searchResults.totalPages
                         self.currentPage += 1
+                        self.isLoading = false
                     }
                 } catch let decodingError {
                     // Print the decoding error for debugging
                     print("Decoding Error: \(decodingError)")
-                    errorMessage = "Error decoding data: \(decodingError.localizedDescription)"
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Error decoding data: \(decodingError.localizedDescription)"
+                        self.isLoading = false
+                    }
                     return
                 }
-            }
-            
-            DispatchQueue.main.async {
-                self.isLoading = false
+            } else {
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                }
             }
         }
         
