@@ -9,7 +9,6 @@ import SwiftUI
 import Defaults
 
 struct ConnectNewView: View {
-    @StateObject var channelsData: ChannelsData
     @Environment(\.services) private var services
     @FocusState private var searchInputIsFocused: Bool
     
@@ -19,6 +18,7 @@ struct ConnectNewView: View {
     @State private var selection: String = "Channels"
     @State private var channelsToConnect: [String] = []
     @State private var isConnecting: Bool = false
+    @State private var channelsState: ChannelsState = .loading
     
     @Binding var imageData: [Data]
     @Binding var textData: String
@@ -28,18 +28,13 @@ struct ConnectNewView: View {
     
     @Environment(\.dismiss) private var dismiss
     
-    init(imageData: Binding<[Data]>, textData: Binding<String>, linkData: Binding<[String]>, titleData: Binding<[String]>, descriptionData: Binding<[String]>) {
-        self._channelsData = StateObject(wrappedValue: ChannelsData(userId: Defaults[.userId]))
-        self._imageData = imageData
-        self._textData = textData
-        self._linkData = linkData
-        self._titleData = titleData
-        self._descriptionData = descriptionData
+    enum ChannelsState {
+        case loading
+        case loaded([ArenaChannelPreview], currentPage: Int, totalPages: Int, isLoadingMore: Bool)
+        case error(String)
     }
     
     var body: some View {
-        let userChannels = channelsData.channels?.channels ?? []
-        
         VStack(spacing: 0) {
             // Search input
             HStack(spacing: 12) {
@@ -168,46 +163,72 @@ struct ConnectNewView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                             .padding(.top, 64)
                     } else {
-                        if !channelsData.isLoading, userChannels.isEmpty {
-                            EmptyUserChannels()
-                        } else {
-                            ForEach(Array(zip(userChannels.indices, userChannels)), id: \.0) { _, channel in
-                                Button(action: {
-                                    searchInputIsFocused = false
-                                    withAnimation(.easeInOut(duration: 0.1)) {
-                                        if channelsToConnect.contains(channel.slug) {
-                                            channelsToConnect.removeAll { $0 == channel.slug }
-                                        } else {
-                                            channelsToConnect.append(channel.slug)
-                                        }
-                                    }
-                                }) {
-                                    SmallChannelPreviewUser(channel: channel)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 16)
-                                                .stroke(channelsToConnect.contains(channel.slug) ? Color("surface-text-secondary") : Color.clear, lineWidth: 2)
-                                        )
-                                        .padding(.bottom, 8)
-                                        .onBecomingVisible {
-                                            if userChannels.count >= 1 {
-                                                if userChannels[userChannels.count - 1].id == channel.id {
-                                                    channelsData.loadMore(userId: Defaults[.userId])
-                                                }
+                        switch channelsState {
+                        case .loading:
+                            CircleLoadingSpinner()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                                .padding(.top, 64)
+                        case .loaded(let channels, let currentPage, let totalPages, let isLoadingMore):
+                            if channels.isEmpty {
+                                EmptyUserChannels()
+                            } else {
+                                ForEach(channels.indices, id: \.self) { index in
+                                    let channel = channels[index]
+                                    Button(action: {
+                                        searchInputIsFocused = false
+                                        withAnimation(.easeInOut(duration: 0.1)) {
+                                            if channelsToConnect.contains(channel.slug) {
+                                                channelsToConnect.removeAll { $0 == channel.slug }
+                                            } else {
+                                                channelsToConnect.append(channel.slug)
                                             }
                                         }
+                                    }) {
+                                        SmallChannelPreviewUser(channel: channel)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 16)
+                                                    .stroke(channelsToConnect.contains(channel.slug) ? Color("surface-text-secondary") : Color.clear, lineWidth: 2)
+                                            )
+                                            .padding(.bottom, 8)
+                                            .onBecomingVisible {
+                                                if channels.count >= 1,
+                                                   channels[channels.count - 1].id == channel.id {
+                                                    Task {
+                                                        await loadMoreChannels()
+                                                    }
+                                                }
+                                            }
+                                    }
+                                    .buttonStyle(ConnectChannelButtonStyle())
                                 }
-                                .buttonStyle(ConnectChannelButtonStyle())
+                                
+                                if isLoadingMore {
+                                    CircleLoadingSpinner()
+                                        .padding(.top, 16)
+                                        .padding(.bottom, 12)
+                                }
+                                
+                                if currentPage > totalPages {
+                                    EndOfUser()
+                                }
                             }
-                            
-                            if channelsData.isLoading {
-                                CircleLoadingSpinner()
-                                    .padding(.top, 16)
-                                    .padding(.bottom, 12)
+                        case .error(let message):
+                            VStack(spacing: 16) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 48))
+                                    .foregroundColor(.red)
+                                Text("Error loading channels")
+                                    .font(.headline)
+                                Text(message)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Button("Try Again") {
+                                    Task {
+                                        await loadUserChannels()
+                                    }
+                                }
                             }
-                            
-                            if channelsData.currentPage > channelsData.totalPages {
-                                EndOfUser()
-                            }
+                            .padding()
                         }
                     }
                 }
@@ -230,6 +251,48 @@ struct ConnectNewView: View {
         }
         .toolbarBackground(Color("background"), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        .task {
+            await loadUserChannels()
+        }
+    }
+    
+    @MainActor
+    private func loadUserChannels() async {
+        channelsState = .loading
+        
+        do {
+            let result = try await services.api.fetchUserChannels(userId: Defaults[.userId], page: 1, per: 10)
+            channelsState = .loaded(
+                Array(result.channels),
+                currentPage: 2,
+                totalPages: result.totalPages,
+                isLoadingMore: false
+            )
+        } catch {
+            channelsState = .error(error.localizedDescription)
+        }
+    }
+    
+    @MainActor
+    private func loadMoreChannels() async {
+        guard case .loaded(let currentChannels, let currentPage, let totalPages, let isLoadingMore) = channelsState,
+              currentPage <= totalPages,
+              !isLoadingMore else { return }
+        
+        channelsState = .loaded(currentChannels, currentPage: currentPage, totalPages: totalPages, isLoadingMore: true)
+        
+        do {
+            let result = try await services.api.fetchUserChannels(userId: Defaults[.userId], page: currentPage, per: 10)
+            channelsState = .loaded(
+                Array(currentChannels + result.channels),
+                currentPage: currentPage + 1,
+                totalPages: totalPages,
+                isLoadingMore: false
+            )
+        } catch {
+            // Revert loading state on error
+            channelsState = .loaded(currentChannels, currentPage: currentPage, totalPages: totalPages, isLoadingMore: false)
+        }
     }
     
     private func searchChannels(query: String) async {
@@ -246,3 +309,4 @@ struct ConnectNewView: View {
         isLoading = false
     }
 }
+

@@ -10,14 +10,18 @@ import Defaults
 import Combine
 
 struct PinnedChannelsView: View {
-    @StateObject private var pinnedChannelsData: PinnedChannelsData
+    @Environment(\.services) private var services
     @Default(.pinnedChannels) var pinnedChannels
     @Default(.pinnedChannelsChanged) var pinnedChannelsChanged
     @Default(.widgetBlockId) var widgetBlockId
     @Default(.widgetTapped) var widgetTapped
     
-    init() {
-        self._pinnedChannelsData = StateObject(wrappedValue: PinnedChannelsData(pinnedChannels: Defaults[.pinnedChannels]))
+    @State private var viewState: ViewState = .loading
+    
+    enum ViewState {
+        case loading
+        case loaded([ArenaChannelPreview])
+        case error(String)
     }
     
     var body: some View {
@@ -25,45 +29,71 @@ struct PinnedChannelsView: View {
             HStack(alignment: .center) {
                 if pinnedChannels.isEmpty {
                     InitialPinnedChannels()
-                } else if pinnedChannelsData.isLoading {
-                    CircleLoadingSpinner()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(pinnedChannelsData.channels ?? [], id: \.id) { channel in
-                                ChannelCard(channel: channel, showPin: false)
-                                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 32))
-                                    .contextMenu {
-                                        Button {
-                                            Defaults[.connectSheetOpen] = true
-                                            Defaults[.connectItemId] = channel.id
-                                            Defaults[.connectItemType] = "Channel"
-                                        } label: {
-                                            Label("Connect", systemImage: "arrow.right")
+                    switch viewState {
+                    case .loading:
+                        CircleLoadingSpinner()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    case .loaded(let channels):
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(channels, id: \.id) { channel in
+                                    ChannelCard(channel: channel, showPin: false)
+                                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 32))
+                                        .contextMenu {
+                                            Button {
+                                                Defaults[.connectSheetOpen] = true
+                                                Defaults[.connectItemId] = channel.id
+                                                Defaults[.connectItemType] = "Channel"
+                                            } label: {
+                                                Label("Connect", systemImage: "arrow.right")
+                                            }
+                                            
+                                            Button {
+                                                removePinnedChannel(channel.id)
+                                                displayToast("Bookmark removed!")
+                                            } label: {
+                                                Label(pinnedChannels.contains(channel.id) ? "Remove bookmark" : "Bookmark", systemImage: pinnedChannels.contains(channel.id) ? "bookmark.fill" : "bookmark")
+                                            }
                                         }
-                                        
-                                        Button {
-                                            removePinnedChannel(channel.id)
-                                            displayToast("Bookmark removed!")
-                                        } label: {
-                                            Label(pinnedChannels.contains(channel.id) ? "Remove bookmark" : "Bookmark", systemImage: pinnedChannels.contains(channel.id) ? "bookmark.fill" : "bookmark")
-                                        }
-                                    }
+                                }
                             }
                         }
-                        
-                    }
-                    .padding(.bottom, 4)
-                    .refreshable {
-                        do { try await Task.sleep(nanoseconds: 500_000_000) } catch {}
-                        pinnedChannelsData.refresh(pinnedChannels: Defaults[.pinnedChannels])
+                        .padding(.bottom, 4)
+                        .refreshable {
+                            do { try await Task.sleep(nanoseconds: 500_000_000) } catch {}
+                            await loadPinnedChannels()
+                        }
+                    case .error(let message):
+                        VStack(spacing: 16) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 48))
+                                .foregroundColor(.red)
+                            Text("Error loading bookmarks")
+                                .font(.headline)
+                            Text(message)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                            Button("Try Again") {
+                                Task {
+                                    await loadPinnedChannels()
+                                }
+                            }
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     }
                 }
             }
-            .onAppear {
-                if pinnedChannelsChanged {
-                    pinnedChannelsData.fetchChannels(pinnedChannels: Defaults[.pinnedChannels], refresh: true)
+            .task {
+                await loadPinnedChannels()
+            }
+            .onChange(of: pinnedChannelsChanged) { _, changed in
+                if changed {
+                    Task {
+                        await loadPinnedChannels()
+                    }
                     Defaults[.pinnedChannelsChanged] = false
                 }
             }
@@ -90,14 +120,31 @@ struct PinnedChannelsView: View {
         .contentMargins(16)
     }
     
-    private func removePinnedChannel(_ channelId: Int) {
-        // If the channel is pinned, remove it from the view without refetching data
-        if let index = pinnedChannelsData.channels?.firstIndex(where: { $0.id == channelId }) {
-            var updatedChannels = pinnedChannelsData.channels ?? []
-            updatedChannels.remove(at: index)
-            pinnedChannelsData.channels = updatedChannels
+    @MainActor
+    private func loadPinnedChannels() async {
+        guard !pinnedChannels.isEmpty else {
+            viewState = .loaded([])
+            return
         }
         
+        viewState = .loading
+        
+        do {
+            let channels = try await services.api.fetchPinnedChannels(channelIds: pinnedChannels)
+            viewState = .loaded(channels)
+        } catch {
+            viewState = .error(error.localizedDescription)
+        }
+    }
+    
+    private func removePinnedChannel(_ channelId: Int) {
+        // Remove from local state immediately for responsive UI
+        if case .loaded(let channels) = viewState {
+            let updatedChannels = channels.filter { $0.id != channelId }
+            viewState = .loaded(updatedChannels)
+        }
+        
+        // Remove from pinned channels array
         pinnedChannels.removeAll { $0 == channelId }
     }
 }

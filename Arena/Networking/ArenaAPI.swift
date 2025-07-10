@@ -17,6 +17,16 @@ protocol ArenaAPIProtocol: Sendable {
     func fetchBlock(id: Int) async throws -> Block
     func fetchBlockConnections(id: Int) async throws -> BlockConnections
     func fetchBlockComments(id: Int, page: Int) async throws -> BlockComments
+    
+    // Channel-specific methods
+    func fetchChannel(slug: String) async throws -> ArenaChannel
+    func fetchChannelContents(slug: String, page: Int, sort: String, direction: String) async throws -> ArenaChannelContents
+    func fetchChannelConnections(slug: String, page: Int) async throws -> ChannelConnections
+    func fetchUserChannels(userId: Int, page: Int, per: Int) async throws -> ArenaChannels
+    func fetchChannelThumb(id: Int) async throws -> ArenaChannelPreview
+    func fetchPinnedChannels(channelIds: [Int]) async throws -> [ArenaChannelPreview]
+    func createChannel(title: String, description: String, status: String) async throws -> ArenaChannelPreview
+    func connectToChannel(channelSlug: String, connectableId: Int, connectableType: String) async throws
 }
 
 // MARK: - API Errors
@@ -147,6 +157,147 @@ extension ArenaAPI {
     }
 }
 
+// MARK: - Channel-specific methods
+extension ArenaAPI {
+    func fetchChannel(slug: String) async throws -> ArenaChannel {
+        return try await get("/channels/\(slug)")
+    }
+    
+    func fetchChannelContents(slug: String, page: Int = 1, sort: String = "position", direction: String = "desc") async throws -> ArenaChannelContents {
+        let queryItems = [
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "sort", value: sort),
+            URLQueryItem(name: "direction", value: direction)
+        ]
+        return try await get("/channels/\(slug)/contents", queryItems: queryItems)
+    }
+    
+    func fetchChannelConnections(slug: String, page: Int = 1) async throws -> ChannelConnections {
+        return try await get("/channels/\(slug)/connections", page: page)
+    }
+    
+    func fetchUserChannels(userId: Int, page: Int = 1, per: Int = 10) async throws -> ArenaChannels {
+        return try await get("/users/\(userId)/channels", page: page, per: per)
+    }
+    
+    func fetchChannelThumb(id: Int) async throws -> ArenaChannelPreview {
+        return try await get("/channels/\(id)/thumb")
+    }
+    
+    func fetchPinnedChannels(channelIds: [Int]) async throws -> [ArenaChannelPreview] {
+        // Fetch all channels in parallel and maintain order
+        let results = try await withThrowingTaskGroup(of: (Int, ArenaChannelPreview).self) { group in
+            // Add tasks for each channel ID
+            for channelId in channelIds {
+                group.addTask {
+                    let channel = try await self.fetchChannelThumb(id: channelId)
+                    return (channelId, channel)
+                }
+            }
+            
+            // Collect results
+            var channels: [(Int, ArenaChannelPreview)] = []
+            for try await result in group {
+                channels.append(result)
+            }
+            return channels
+        }
+        
+        // Sort results to maintain the original order of channelIds
+        let sortedResults = results.sorted { a, b in
+            guard let indexA = channelIds.firstIndex(of: a.0),
+                  let indexB = channelIds.firstIndex(of: b.0) else {
+                return false
+            }
+            return indexA < indexB
+        }
+        
+        return sortedResults.map { $0.1 }
+    }
+    
+    func createChannel(title: String, description: String, status: String) async throws -> ArenaChannelPreview {
+        // Build URL
+        let urlString = baseURL + "/channels"
+        guard let url = URL(string: urlString) else {
+            throw ArenaAPIError.invalidURL
+        }
+        
+        // Create request body
+        let body: [String: Any] = [
+            "title": title,
+            "description": description,
+            "status": status
+        ]
+        let httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        // Create request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(Defaults[.accessToken])", forHTTPHeaderField: "Authorization")
+        request.httpBody = httpBody
+        
+        // Perform request
+        let (data, response) = try await session.data(for: request)
+        
+        // Handle HTTP response
+        if let httpResponse = response as? HTTPURLResponse {
+            switch httpResponse.statusCode {
+            case 200...299:
+                break // Success
+            case 401:
+                throw ArenaAPIError.unauthorized
+            case 400...499, 500...599:
+                throw ArenaAPIError.serverError(httpResponse.statusCode)
+            default:
+                throw ArenaAPIError.serverError(httpResponse.statusCode)
+            }
+        }
+        
+        // Decode response
+        return try decoder.decode(ArenaChannelPreview.self, from: data)
+    }
+    
+    func connectToChannel(channelSlug: String, connectableId: Int, connectableType: String) async throws {
+        // Build URL
+        let urlString = baseURL + "/channels/\(channelSlug)/connections"
+        guard let url = URL(string: urlString) else {
+            throw ArenaAPIError.invalidURL
+        }
+        
+        // Create request body
+        let body: [String: Any] = [
+            "connectable_id": connectableId,
+            "connectable_type": connectableType
+        ]
+        let httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        // Create request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(Defaults[.accessToken])", forHTTPHeaderField: "Authorization")
+        request.httpBody = httpBody
+        
+        // Perform request
+        let (_, response) = try await session.data(for: request)
+        
+        // Handle HTTP response
+        if let httpResponse = response as? HTTPURLResponse {
+            switch httpResponse.statusCode {
+            case 200...299:
+                break // Success
+            case 401:
+                throw ArenaAPIError.unauthorized
+            case 400...499, 500...599:
+                throw ArenaAPIError.serverError(httpResponse.statusCode)
+            default:
+                throw ArenaAPIError.serverError(httpResponse.statusCode)
+            }
+        }
+    }
+}
+
 // MARK: - Convenience Extensions
 extension ArenaAPI {
     /// Fetch with pagination support (convenience extension)
@@ -210,6 +361,50 @@ final class MockArenaAPI: ArenaAPIProtocol, @unchecked Sendable {
     
     func fetchBlockComments(id: Int, page: Int = 1) async throws -> BlockComments {
         return try await get("/blocks/\(id)/comments", queryItems: [URLQueryItem(name: "page", value: "\(page)")])
+    }
+    
+    // Channel-specific methods
+    func fetchChannel(slug: String) async throws -> ArenaChannel {
+        return try await get("/channels/\(slug)")
+    }
+    
+    func fetchChannelContents(slug: String, page: Int = 1, sort: String = "position", direction: String = "desc") async throws -> ArenaChannelContents {
+        return try await get("/channels/\(slug)/contents")
+    }
+    
+    func fetchChannelConnections(slug: String, page: Int = 1) async throws -> ChannelConnections {
+        return try await get("/channels/\(slug)/connections")
+    }
+    
+    func fetchUserChannels(userId: Int, page: Int = 1, per: Int = 10) async throws -> ArenaChannels {
+        return try await get("/users/\(userId)/channels")
+    }
+    
+    func fetchChannelThumb(id: Int) async throws -> ArenaChannelPreview {
+        return try await get("/channels/\(id)/thumb")
+    }
+    
+    func fetchPinnedChannels(channelIds: [Int]) async throws -> [ArenaChannelPreview] {
+        if shouldFail {
+            throw errorToThrow
+        }
+        // Return empty array for mock
+        return []
+    }
+    
+    func createChannel(title: String, description: String, status: String) async throws -> ArenaChannelPreview {
+        if shouldFail {
+            throw errorToThrow
+        }
+        // Return mock channel preview for testing
+        throw ArenaAPIError.noData
+    }
+    
+    func connectToChannel(channelSlug: String, connectableId: Int, connectableType: String) async throws {
+        if shouldFail {
+            throw errorToThrow
+        }
+        // Mock implementation - no return value needed
     }
 }
 #endif 

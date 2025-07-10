@@ -31,9 +31,10 @@ enum ContentOption: String, CaseIterable, Sendable {
 }
 
 struct ChannelView: View {
-    @StateObject private var channelData: ChannelData
-    @StateObject private var channelConnectionsData: ChannelConnectionsData
     let channelSlug: String
+    
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.services) private var services
     
     @State private var selection = SortOption.position
     @State private var display = DisplayOption.grid
@@ -41,16 +42,24 @@ struct ChannelView: View {
     @State private var channelPinned = false
     @State private var clickedPin = false
     @State private var showingConnections = false
+    @State private var channelState: ChannelState = .loading
+    @State private var connectionsState: ConnectionsState = .idle
+    
     let sortOptions = SortOption.allCases
     let displayOptions = DisplayOption.allCases
     let contentOptions = ContentOption.allCases
     
-    @Environment(\.dismiss) private var dismiss
+    enum ChannelState {
+        case loading
+        case loaded(channel: ArenaChannel, contents: [Block], currentPage: Int, totalPages: Int, isLoadingMore: Bool)
+        case error(String)
+    }
     
-    init(channelSlug: String) {
-        self.channelSlug = channelSlug
-        self._channelData = StateObject(wrappedValue: ChannelData(channelSlug: channelSlug, selection: SortOption.position))
-        self._channelConnectionsData = StateObject(wrappedValue: ChannelConnectionsData(channelSlug: channelSlug))
+    enum ConnectionsState {
+        case idle
+        case loading
+        case loaded([ArenaSearchedChannel], currentPage: Int, totalPages: Int, isLoadingMore: Bool)
+        case error(String)
     }
     
     var displayLabel: some View {
@@ -83,22 +92,30 @@ struct ChannelView: View {
     }
     
     @ViewBuilder
-    private func destinationView(for block: Block, channelData: ChannelData, channelSlug: String) -> some View {
+    private func destinationView(for block: Block) -> some View {
         if block.baseClass == "Block" {
-            BlockView(blockData: block, channelData: channelData, channelSlug: channelSlug)
+            // For now, we'll need to handle this differently since BlockView still expects ChannelData
+            // This will be fixed in a later migration step
+            SingleBlockView(block: block)
         } else {
             ChannelView(channelSlug: block.slug ?? "")
         }
     }
     
     @ViewBuilder
-    private func ChannelViewContents(gridItemSize: CGFloat) -> some View {
-        ForEach(channelData.contents ?? [], id: \.self.id) { block in
-            NavigationLink(destination: destinationView(for: block, channelData: channelData, channelSlug: channelSlug)) {
-                ChannelContentPreview(block: block, channelData: channelData, channelSlug: channelSlug, gridItemSize: gridItemSize, display: display.rawValue)
+    private func ChannelViewContents(contents: [Block], gridItemSize: CGFloat) -> some View {
+        ForEach(contents, id: \.id) { block in
+            NavigationLink(destination: destinationView(for: block)) {
+                ChannelContentPreview(
+                    block: block,
+                    channelData: ChannelData(channelSlug: channelSlug, selection: .newest),
+                    channelSlug: channelSlug,
+                    gridItemSize: gridItemSize,
+                    display: display.rawValue
+                )
             }
             .onAppear {
-                loadMoreChannelData(channelData: channelData, channelSlug: self.channelSlug, block: block)
+                loadMoreChannelData(block: block)
             }
             .simultaneousGesture(TapGesture().onEnded{
                 let id = UUID()
@@ -130,73 +147,118 @@ struct ChannelView: View {
         display.rawValue == "Grid" ? (displayWidth - (gridGap * 3)) / 2 :
         display.rawValue == "Large Grid" ? (displayWidth - (gridGap * 4)) / 3 :
         (displayWidth - (gridGap * 2))
-        let channelCreator = channelData.channel?.user.slug ?? ""
-        let channelId = channelData.channel?.id ?? 0
         
-        ZStack {
+        return ZStack {
             ScrollViewReader { proxy in
                 ScrollView {
                     ZStack {}.id(0) // Hacky implementation of scroll to top when switching sorting option
                     
-                    ChannelViewHeader(channelData: channelData, content: $content, showingConnections: $showingConnections, contentOptions: contentOptions)
+                    // Channel header based on state
+                    if case .loaded(let channel, _, _, _, _) = channelState {
+                        ChannelViewHeader(channel: channel, content: $content, showingConnections: $showingConnections, contentOptions: contentOptions)
+                    }
                     
                     if showingConnections {
-                        if !channelConnectionsData.isLoading, channelConnectionsData.channelConnections.isEmpty {
-                            EmptyChannelConnections()
-                        } else {
-                            ForEach(channelConnectionsData.channelConnections, id: \.id) { channel in
-                                NavigationLink(destination: ChannelView(channelSlug: channel.slug)) {
-                                    SearchChannelPreview(channel: channel)
-                                }
-                                .onBecomingVisible {
-                                    if channelConnectionsData.channelConnections.last?.id ?? -1 == channel.id {
-                                        if !channelConnectionsData.isLoading {
-                                            channelConnectionsData.loadMore(channelSlug: self.channelSlug)
-                                        }
-                                    }
-                                }
-                                .simultaneousGesture(TapGesture().onEnded{
-                                    let id = UUID()
-                                    let formatter = DateFormatter()
-                                    formatter.dateFormat = "HH:mm, d MMM y"
-                                    let timestamp = formatter.string(from: Date.now)
-                                    Defaults[.rabbitHole].insert(RabbitHoleItem(id: id.uuidString, type: "channel", subtype: channel.status, itemId: channel.slug, timestamp: timestamp, mainText: channel.title, subText: String(channel.length), imageUrl: String(channel.id)), at: 0)
-                                })
-                            }
-                            
-                            if channelConnectionsData.isLoading {
-                                CircleLoadingSpinner()
-                                    .padding(.top, 24)
-                                    .padding(.bottom, 72)
-                            }
-                            
-                            if channelConnectionsData.currentPage > channelConnectionsData.totalPages {
-                                EndOfChannelConnections()
-                                    .padding(.bottom, 72)
-                            }
-                        }
-                    } else {
-                        if display.rawValue == "Table" {
-                            LazyVStack(spacing: 8) {
-                                ChannelViewContents(gridItemSize: gridItemSize)
-                            }
-                        } else {
-                            LazyVGrid(columns: gridColumns, spacing: gridSpacing) {
-                                ChannelViewContents(gridItemSize: gridItemSize)
-                            }
-                        }
-                        
-                        if (channelData.isLoading || channelData.isContentsLoading) {
+                        // Show connections
+                        switch connectionsState {
+                        case .idle:
+                            EmptyView()
+                        case .loading:
                             CircleLoadingSpinner()
                                 .padding(.top, 24)
                                 .padding(.bottom, 72)
+                        case .loaded(let connections, _, let totalPages, let isLoadingMore):
+                            if connections.isEmpty {
+                                EmptyChannelConnections()
+                            } else {
+                                ForEach(connections, id: \.id) { channel in
+                                    NavigationLink(destination: ChannelView(channelSlug: channel.slug)) {
+                                        SearchChannelPreview(channel: channel)
+                                    }
+                                    .onBecomingVisible {
+                                        if connections.last?.id ?? -1 == channel.id {
+                                            Task {
+                                                await loadMoreConnections()
+                                            }
+                                        }
+                                    }
+                                    .simultaneousGesture(TapGesture().onEnded{
+                                        let id = UUID()
+                                        let formatter = DateFormatter()
+                                        formatter.dateFormat = "HH:mm, d MMM y"
+                                        let timestamp = formatter.string(from: Date.now)
+                                        Defaults[.rabbitHole].insert(RabbitHoleItem(id: id.uuidString, type: "channel", subtype: channel.status, itemId: channel.slug, timestamp: timestamp, mainText: channel.title, subText: String(channel.length), imageUrl: String(channel.id)), at: 0)
+                                    })
+                                }
+                                
+                                if isLoadingMore {
+                                    CircleLoadingSpinner()
+                                        .padding(.top, 24)
+                                        .padding(.bottom, 72)
+                                }
+                                
+                                if case .loaded(_, let currentPage, let totalPages, _) = connectionsState,
+                                   currentPage > totalPages {
+                                    EndOfChannelConnections()
+                                        .padding(.bottom, 72)
+                                }
+                            }
+                        case .error(let message):
+                            VStack {
+                                Text("Error loading connections")
+                                    .font(.headline)
+                                Text(message)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding()
                         }
-                        
-                        if let channelContents = channelData.contents, channelContents.isEmpty {
-                            EmptyChannel()
-                        } else if channelData.currentPage > channelData.totalPages {
-                            EndOfChannel()
+                    } else {
+                        // Show channel contents
+                        switch channelState {
+                        case .loading:
+                            CircleLoadingSpinner()
+                                .padding(.top, 24)
                                 .padding(.bottom, 72)
+                        case .loaded(_, let contents, let currentPage, let totalPages, let isLoadingMore):
+                            if contents.isEmpty {
+                                EmptyChannel()
+                            } else {
+                                if display.rawValue == "Table" {
+                                    LazyVStack(spacing: 8) {
+                                        ChannelViewContents(contents: contents, gridItemSize: gridItemSize)
+                                    }
+                                } else {
+                                    LazyVGrid(columns: gridColumns, spacing: gridSpacing) {
+                                        ChannelViewContents(contents: contents, gridItemSize: gridItemSize)
+                                    }
+                                }
+                                
+                                if isLoadingMore {
+                                    CircleLoadingSpinner()
+                                        .padding(.top, 24)
+                                        .padding(.bottom, 72)
+                                }
+                                
+                                if currentPage > totalPages {
+                                    EndOfChannel()
+                                        .padding(.bottom, 72)
+                                }
+                            }
+                        case .error(let message):
+                            VStack {
+                                Text("Error loading channel")
+                                    .font(.headline)
+                                Text(message)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Button("Try Again") {
+                                    Task {
+                                        await refreshChannel()
+                                    }
+                                }
+                            }
+                            .padding()
                         }
                     }
                 }
@@ -207,9 +269,9 @@ struct ChannelView: View {
                 .refreshable {
                     do { try await Task.sleep(nanoseconds: 500_000_000) } catch {}
                     if showingConnections {
-                        channelData.refresh(channelSlug: self.channelSlug, selection: selection)
+                        await loadConnections()
                     } else {
-                        channelConnectionsData.refresh(channelSlug: self.channelSlug)
+                        await refreshChannel()
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)
@@ -256,22 +318,33 @@ struct ChannelView: View {
                 }
                 .toolbarBackground(Color("background"), for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
-                .onChange(of: selection, initial: true) { oldSelection, newSelection in
+                .onChange(of: selection, initial: false) { oldSelection, newSelection in
                     if oldSelection != newSelection {
                         proxy.scrollTo(0) // TODO: Decide if want withAnimation { proxy.scrollTo(0) }
-                        channelData.selection = newSelection
-                        channelData.refresh(channelSlug: self.channelSlug, selection: newSelection)
+                        Task {
+                            await refreshChannel()
+                        }
                     }
                 }
-                .onChange(of: display, initial: true) { oldDisplay, newDisplay in
+                .onChange(of: display, initial: false) { oldDisplay, newDisplay in
                     if oldDisplay != newDisplay {
                         proxy.scrollTo(0)
                     }
                 }
+                .onChange(of: showingConnections) { _, isShowing in
+                    if isShowing {
+                        Task {
+                            await loadConnections()
+                        }
+                    }
+                }
+                .task {
+                    await loadChannel()
+                }
             }
         }
         .overlay(alignment: .bottom) {
-            if channelId != 0 {
+            if case .loaded(let channel, _, _, _, _) = channelState {
                 HStack(spacing: 9) {
                     Menu {
                         Button(action: {
@@ -283,7 +356,7 @@ struct ChannelView: View {
                             Label("Copy channel slug", systemImage: "clipboard")
                         }
                         
-                        ShareLink(item: URL(string: "https://are.na/\(channelCreator)/\(channelSlug)")!) {
+                        ShareLink(item: URL(string: "https://are.na/\(channel.user.slug ?? "")/\(channelSlug)")!) {
                             Label("Share channel", systemImage: "square.and.arrow.up")
                         }
                     } label: {
@@ -310,7 +383,7 @@ struct ChannelView: View {
                     
                     Button(action: {
                         Defaults[.connectSheetOpen] = true
-                        Defaults[.connectItemId] = channelId
+                        Defaults[.connectItemId] = channel.id
                         Defaults[.connectItemType] = "Channel"
                     }) {
                         Text("Connect")
@@ -325,9 +398,9 @@ struct ChannelView: View {
                     .cornerRadius(16)
                     
                     Button(action: {
-                        togglePin(channelId)
+                        togglePin(channel.id)
                     }) {
-                        Image(systemName: clickedPin ? channelPinned ? "bookmark.fill" : "bookmark" : Defaults[.pinnedChannels].contains(channelId) ? "bookmark.fill" : "bookmark")
+                        Image(systemName: clickedPin ? channelPinned ? "bookmark.fill" : "bookmark" : Defaults[.pinnedChannels].contains(channel.id) ? "bookmark.fill" : "bookmark")
                             .fontWeight(.bold)
                             .imageScale(.small)
                             .foregroundStyle(Color("text-primary"))
@@ -355,36 +428,168 @@ struct ChannelView: View {
         Defaults[.pinnedChannelsChanged] = true
     }
     
-    private func loadMoreChannelData(channelData: ChannelData, channelSlug: String, block: Block) {
-        if let contents = channelData.contents,
-           contents.count >= 8,
-           contents[contents.count - 8].id == block.id,
-           !channelData.isContentsLoading {
-            channelData.loadMore(channelSlug: channelSlug)
+    @MainActor
+    private func loadChannel() async {
+        channelState = .loading
+        
+        do {
+            // Load channel metadata and initial contents in parallel
+            async let channelResult = services.api.fetchChannel(slug: channelSlug)
+            async let contentsResult = services.api.fetchChannelContents(
+                slug: channelSlug,
+                page: 1,
+                sort: sortParam(for: selection),
+                direction: sortDirection(for: selection)
+            )
+            
+            let channel = try await channelResult
+            let contents = try await contentsResult
+            let totalPages = Int(ceil(Double(channel.length) / Double(20)))
+            
+            channelState = .loaded(
+                channel: channel,
+                contents: contents.contents ?? [],
+                currentPage: 2, // Next page to load
+                totalPages: totalPages,
+                isLoadingMore: false
+            )
+        } catch {
+            channelState = .error(error.localizedDescription)
+        }
+    }
+    
+    @MainActor
+    private func loadMoreContent() async {
+        guard case .loaded(let channel, let currentContents, let currentPage, let totalPages, let isLoadingMore) = channelState,
+              currentPage <= totalPages,
+              !isLoadingMore else { return }
+        
+        // Update state to show loading more
+        channelState = .loaded(
+            channel: channel,
+            contents: currentContents,
+            currentPage: currentPage,
+            totalPages: totalPages,
+            isLoadingMore: true
+        )
+        
+        do {
+            let newContents = try await services.api.fetchChannelContents(
+                slug: channelSlug,
+                page: currentPage,
+                sort: sortParam(for: selection),
+                direction: sortDirection(for: selection)
+            )
+            
+            channelState = .loaded(
+                channel: channel,
+                contents: Array(currentContents + (newContents.contents ?? [])),
+                currentPage: currentPage + 1,
+                totalPages: totalPages,
+                isLoadingMore: false
+            )
+        } catch {
+            // Revert loading state on error
+            channelState = .loaded(
+                channel: channel,
+                contents: currentContents,
+                currentPage: currentPage,
+                totalPages: totalPages,
+                isLoadingMore: false
+            )
+        }
+    }
+    
+    @MainActor
+    private func refreshChannel() async {
+        channelState = .loading
+        await loadChannel()
+    }
+    
+    @MainActor
+    private func loadConnections() async {
+        connectionsState = .loading
+        
+        do {
+            let result = try await services.api.fetchChannelConnections(slug: channelSlug, page: 1)
+            connectionsState = .loaded(
+                result.channels,
+                currentPage: 2,
+                totalPages: result.totalPages,
+                isLoadingMore: false
+            )
+        } catch {
+            connectionsState = .error(error.localizedDescription)
+        }
+    }
+    
+    @MainActor
+    private func loadMoreConnections() async {
+        guard case .loaded(let currentConnections, let currentPage, let totalPages, let isLoadingMore) = connectionsState,
+              currentPage <= totalPages,
+              !isLoadingMore else { return }
+        
+        connectionsState = .loaded(currentConnections, currentPage: currentPage, totalPages: totalPages, isLoadingMore: true)
+        
+        do {
+            let result = try await services.api.fetchChannelConnections(slug: channelSlug, page: currentPage)
+            connectionsState = .loaded(
+                Array(currentConnections + result.channels),
+                currentPage: currentPage + 1,
+                totalPages: totalPages,
+                isLoadingMore: false
+            )
+        } catch {
+            connectionsState = .loaded(currentConnections, currentPage: currentPage, totalPages: totalPages, isLoadingMore: false)
+        }
+    }
+    
+    private func sortParam(for option: SortOption) -> String {
+        switch option {
+        case .position: return "position"
+        case .newest: return "created_at"
+        case .oldest: return "created_at"
+        }
+    }
+    
+    private func sortDirection(for option: SortOption) -> String {
+        switch option {
+        case .position: return "desc"
+        case .newest: return "desc"
+        case .oldest: return "asc"
+        }
+    }
+    
+    private func loadMoreChannelData(block: Block) {
+        guard case .loaded(_, let contents, _, _, let isLoadingMore) = channelState,
+              contents.count >= 8,
+              contents[contents.count - 8].id == block.id,
+              !isLoadingMore else { return }
+        
+        Task {
+            await loadMoreContent()
         }
     }
 }
 
 struct ChannelViewHeader: View {
-    @StateObject var channelData: ChannelData
+    let channel: ArenaChannel
     @Binding var content: ContentOption
     @Binding var showingConnections: Bool
     @State var descriptionExpanded = false
     var contentOptions: [ContentOption]
     
     var body: some View {
-        let channelTitle = channelData.channel?.title ?? ""
-        let channelCreatedAt = channelData.channel?.createdAt ?? ""
+        let channelTitle = channel.title
+        let channelCreatedAt = channel.createdAt
         let channelCreated = dateFromString(string: channelCreatedAt)
-        let channelUpdatedAt = channelData.channel?.updatedAt ?? ""
+        let channelUpdatedAt = channel.updatedAt
         let channelUpdated = relativeTime(channelUpdatedAt)
-        let channelStatus = channelData.channel?.status ?? ""
-        let channelDescription = channelData.channel?.metadata?.description ?? ""
-        let channelOwner = channelData.channel?.user.fullName ?? ""
-        //        let channelOwnerChannels = channelData.channel?.user.channelCount ?? 0
-        let channelOwnerId = channelData.channel?.user.id ?? 0
-        //        let channelOwnerImage = channelData.channel?.user.avatarImage.display ?? ""
-        let channelCollaborators = channelData.channel?.collaborators ?? []
+        let channelStatus = channel.status
+        let channelDescription = channel.metadata?.description ?? ""
+        let channelOwner = channel.user.fullName
+        let channelOwnerId = channel.user.id
+        let channelCollaborators = channel.collaborators
         
         VStack(spacing: 16) {
             // MARK: Channel Title / Dates
@@ -453,9 +658,7 @@ struct ChannelViewHeader: View {
                             .foregroundColor(Color("text-primary"))
                     }
                         .simultaneousGesture(TapGesture().onEnded{
-                            if channelData.channel != nil {
-                                AddUserToRabbitHole(user: channelData.channel!.user)
-                            }
+                            AddUserToRabbitHole(user: channel.user)
                         })
                     
                     let collaboratorLinks = channelCollaborators.map { collaborator in
@@ -520,8 +723,8 @@ struct ChannelViewHeader: View {
                             Text("\(option.rawValue)")
                                 .foregroundStyle(Color(content == option ? "background" : "surface-text-secondary"))
                             
-                            if option.rawValue == "All", let channelLength = channelData.channel?.length {
-                                Text("\(channelLength)")
+                            if option.rawValue == "All" {
+                                Text("\(channel.length)")
                                     .foregroundStyle(Color(content == option ? "surface-text-secondary" : "surface-tertiary"))
                             }
                         }
