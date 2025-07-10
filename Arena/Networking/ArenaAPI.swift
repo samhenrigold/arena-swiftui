@@ -12,6 +12,11 @@ import Defaults
 protocol ArenaAPIProtocol: Sendable {
     func get<T: Decodable & Sendable>(_ path: String, queryItems: [URLQueryItem]?) async throws -> T
     func search<T: Decodable & Sendable>(_ path: String, query: String, page: Int?, per: Int?) async throws -> T
+    
+    // Block-specific methods
+    func fetchBlock(id: Int) async throws -> Block
+    func fetchBlockConnections(id: Int) async throws -> BlockConnections
+    func fetchBlockComments(id: Int, page: Int) async throws -> BlockComments
 }
 
 // MARK: - API Errors
@@ -127,11 +132,23 @@ actor ArenaAPI: ArenaAPIProtocol {
     }
 }
 
+// MARK: - Block-specific methods
+extension ArenaAPI {
+    func fetchBlock(id: Int) async throws -> Block {
+        return try await get("/blocks/\(id)")
+    }
+    
+    func fetchBlockConnections(id: Int) async throws -> BlockConnections {
+        return try await get("/blocks/\(id)")
+    }
+    
+    func fetchBlockComments(id: Int, page: Int = 1) async throws -> BlockComments {
+        return try await get("/blocks/\(id)/comments", page: page)
+    }
+}
+
 // MARK: - Convenience Extensions
 extension ArenaAPI {
-    
-
-    
     /// Fetch with pagination support (convenience extension)
     func get<T: Decodable & Sendable>(_ path: String, page: Int? = nil, per: Int? = nil, additionalQueryItems: [URLQueryItem]? = nil) async throws -> T {
         var queryItems: [URLQueryItem] = []
@@ -180,6 +197,19 @@ final class MockArenaAPI: ArenaAPIProtocol, @unchecked Sendable {
         
         // For mock, just return same as get() - simplified for testing
         return try await get(path, queryItems: nil)
+    }
+    
+    // Block-specific methods
+    func fetchBlock(id: Int) async throws -> Block {
+        return try await get("/blocks/\(id)")
+    }
+    
+    func fetchBlockConnections(id: Int) async throws -> BlockConnections {
+        return try await get("/blocks/\(id)")
+    }
+    
+    func fetchBlockComments(id: Int, page: Int = 1) async throws -> BlockComments {
+        return try await get("/blocks/\(id)/comments", queryItems: [URLQueryItem(name: "page", value: "\(page)")])
     }
 }
 #endif 

@@ -11,9 +11,7 @@ import Defaults
 struct SingleBlockView: View {
     let block: Block
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var connectionsViewModel = BlockConnectionsData()
-    @StateObject private var commentsViewModel = BlockCommentsData()
-    @State private var isLoadingBlockConnectionsComments: Bool = false
+    @Environment(\.services) private var services
     let bottomPaddingExtra: CGFloat = Defaults[.hasNotch] ? 12.0 : 24.0
     
     @State private var showInfoModal: Bool = false
@@ -23,6 +21,14 @@ struct SingleBlockView: View {
     @State private var titleExpanded: Bool = false
     @State private var descriptionExpanded: Bool = false
     @State private var isConnectionsView = true
+    @State private var viewState: ViewState = .idle
+    
+    enum ViewState {
+        case idle
+        case loading
+        case loaded(connections: [BlockConnection], comments: [BlockComment])
+        case error(String)
+    }
     
     struct InfoModalButton: View {
         @Binding var showInfoModal: Bool
@@ -274,124 +280,133 @@ struct SingleBlockView: View {
                                     
                                     // Connections and Comments
                                     VStack {
-                                        HStack {
-                                            Spacer()
-                                            Button(action: { isConnectionsView = true }) {
-                                                Text("Connections (\(connectionsViewModel.connections.count))")
-                                                    .fontWeight(.medium)
-                                                    .fontDesign(.rounded)
-                                                    .frame(maxWidth: .infinity)
-                                                    .foregroundStyle(Color(isConnectionsView ? "text-primary" : "surface-text-secondary"))
-                                            }
-                                            Spacer()
-                                            Button(action: { isConnectionsView = false }) {
-                                                Text("Comments (\(commentsViewModel.comments.count))")
-                                                    .fontWeight(.medium)
-                                                    .fontDesign(.rounded)
-                                                    .frame(maxWidth: .infinity)
-                                                    .foregroundStyle(Color(isConnectionsView ? "surface-text-secondary" : "text-primary"))
-                                            }
-                                            Spacer()
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        .font(.system(size: 14))
-                                        
-                                        HStack(spacing: 0) {
-                                            Rectangle()
-                                                .fill(Color(isConnectionsView ? "text-primary" : "text-secondary"))
-                                                .frame(maxWidth: .infinity, maxHeight: 1)
-                                            Rectangle()
-                                                .fill(Color(isConnectionsView ? "text-secondary" : "text-primary"))
-                                                .frame(maxWidth: .infinity, maxHeight: 1)
-                                        }
-                                        
-                                        if isLoadingBlockConnectionsComments {
+                                        switch viewState {
+                                        case .idle:
+                                            EmptyView()
+                                        case .loading:
                                             CircleLoadingSpinner()
                                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                                 .padding(.vertical, 12)
-                                        } else {
-                                            LazyVStack(spacing: isConnectionsView ? 12 : 24) {
-                                                if isConnectionsView {
-                                                    ForEach(connectionsViewModel.connections, id: \.id) { connection in
-                                                        NavigationLink(destination: ChannelView(channelSlug: connection.slug)) {
-                                                            VStack(spacing: 4) {
-                                                                HStack(spacing: 4) {
-                                                                    if connection.status != "closed" {
-                                                                        Image(systemName: "circle.fill")
-                                                                            .scaleEffect(0.5)
-                                                                            .foregroundColor(connection.status == "public" ? Color.green : Color.red)
+                                        case .loaded(let connections, let comments):
+                                            VStack {
+                                                HStack {
+                                                    Spacer()
+                                                    Button(action: { isConnectionsView = true }) {
+                                                        Text("Connections (\(connections.count))")
+                                                            .fontWeight(.medium)
+                                                            .fontDesign(.rounded)
+                                                            .frame(maxWidth: .infinity)
+                                                            .foregroundStyle(Color(isConnectionsView ? "text-primary" : "surface-text-secondary"))
+                                                    }
+                                                    Spacer()
+                                                    Button(action: { isConnectionsView = false }) {
+                                                        Text("Comments (\(comments.count))")
+                                                            .fontWeight(.medium)
+                                                            .fontDesign(.rounded)
+                                                            .frame(maxWidth: .infinity)
+                                                            .foregroundStyle(Color(isConnectionsView ? "surface-text-secondary" : "text-primary"))
+                                                    }
+                                                    Spacer()
+                                                }
+                                                .frame(maxWidth: .infinity)
+                                                .font(.system(size: 14))
+                                                
+                                                HStack(spacing: 0) {
+                                                    Rectangle()
+                                                        .fill(Color(isConnectionsView ? "text-primary" : "text-secondary"))
+                                                        .frame(maxWidth: .infinity, maxHeight: 1)
+                                                    Rectangle()
+                                                        .fill(Color(isConnectionsView ? "text-secondary" : "text-primary"))
+                                                        .frame(maxWidth: .infinity, maxHeight: 1)
+                                                }
+                                                
+                                                LazyVStack(spacing: isConnectionsView ? 12 : 24) {
+                                                    if isConnectionsView {
+                                                        ForEach(connections, id: \.id) { connection in
+                                                            NavigationLink(destination: ChannelView(channelSlug: connection.slug)) {
+                                                                VStack(spacing: 4) {
+                                                                    HStack(spacing: 4) {
+                                                                        if connection.status != "closed" {
+                                                                            Image(systemName: "circle.fill")
+                                                                                .scaleEffect(0.5)
+                                                                                .foregroundColor(connection.status == "public" ? Color.green : Color.red)
+                                                                        }
+                                                                        Text("\(connection.title)")
+                                                                            .foregroundStyle(Color("text-primary"))
+                                                                            .font(.system(size: 16))
+                                                                            .lineLimit(1)
+                                                                            .fontDesign(.rounded)
+                                                                            .fontWeight(.medium)
+                                                                            .frame(maxWidth: .infinity, alignment: .leading)
                                                                     }
-                                                                    Text("\(connection.title)")
-                                                                        .foregroundStyle(Color("text-primary"))
-                                                                        .font(.system(size: 16))
+                                                                    
+                                                                    Text("\(connection.length) items")
+                                                                        .font(.system(size: 14))
                                                                         .lineLimit(1)
-                                                                        .fontDesign(.rounded)
-                                                                        .fontWeight(.medium)
+                                                                        .foregroundStyle(Color("surface-text-secondary"))
                                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                                 }
-                                                                
-                                                                Text("\(connection.length) items")
-                                                                    .font(.system(size: 14))
-                                                                    .lineLimit(1)
-                                                                    .foregroundStyle(Color("surface-text-secondary"))
-                                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                                .padding(12)
+                                                                .frame(maxWidth: .infinity)
+                                                                .cornerRadius(12)
+                                                                .overlay(
+                                                                    RoundedRectangle(cornerRadius: 12)
+                                                                        .stroke(Color("surface-tertiary"), lineWidth: 2)
+                                                                )
                                                             }
-                                                            .padding(12)
-                                                            .frame(maxWidth: .infinity)
-                                                            .cornerRadius(12)
-                                                            .overlay(
-                                                                RoundedRectangle(cornerRadius: 12)
-                                                                    .stroke(Color("surface-tertiary"), lineWidth: 2)
-                                                            )
+                                                            .simultaneousGesture(TapGesture().onEnded{
+                                                                let id = UUID()
+                                                                let formatter = DateFormatter()
+                                                                formatter.dateFormat = "HH:mm, d MMM y"
+                                                                let timestamp = formatter.string(from: Date.now)
+                                                                Defaults[.rabbitHole].insert(RabbitHoleItem(id: id.uuidString, type: "channel", subtype: connection.status, itemId: connection.slug, timestamp: timestamp, mainText: connection.title, subText: String(connection.length), imageUrl: String(connection.id)), at: 0)
+                                                            })
                                                         }
-                                                        .simultaneousGesture(TapGesture().onEnded{
-                                                            let id = UUID()
-                                                            let formatter = DateFormatter()
-                                                            formatter.dateFormat = "HH:mm, d MMM y"
-                                                            let timestamp = formatter.string(from: Date.now)
-                                                            Defaults[.rabbitHole].insert(RabbitHoleItem(id: id.uuidString, type: "channel", subtype: connection.status, itemId: connection.slug, timestamp: timestamp, mainText: connection.title, subText: String(connection.length), imageUrl: String(connection.id)), at: 0)
-                                                        })
-                                                    }
-                                                } else {
-                                                    if (commentsViewModel.comments.count == 0) {
-                                                        EmptyBlockComments()
                                                     } else {
-                                                        ForEach(commentsViewModel.comments, id: \.id) { comment in
-                                                            HStack(alignment: .top, spacing: 8) {
-                                                                NavigationLink(destination: UserView(userId: comment.user.id)) {
-                                                                    ProfilePic(imageURL: comment.user.avatarImage.display, initials: comment.user.initials)
-                                                                }
-                                                                .simultaneousGesture(TapGesture().onEnded{
-                                                                    AddUserToRabbitHole(user: comment.user)
-                                                                })
-                                                                
-                                                                VStack(alignment: .leading, spacing: 4) {
-                                                                    HStack {
-                                                                        NavigationLink(destination: UserView(userId: comment.user.id)) {
-                                                                            Text("\(comment.user.fullName)")
-                                                                                .foregroundStyle(Color("text-primary"))
-                                                                                .fontDesign(.rounded)
-                                                                                .fontWeight(.medium)
-                                                                        }
-                                                                        .simultaneousGesture(TapGesture().onEnded{
-                                                                            AddUserToRabbitHole(user: comment.user)
-                                                                        })
-                                                                        Spacer()
-                                                                        Text("\(relativeTime(comment.createdAt))")
-                                                                            .foregroundStyle(Color("surface-text-secondary"))
-                                                                            .font(.system(size: 14))
+                                                        if (comments.count == 0) {
+                                                            EmptyBlockComments()
+                                                        } else {
+                                                            ForEach(comments, id: \.id) { comment in
+                                                                HStack(alignment: .top, spacing: 8) {
+                                                                    NavigationLink(destination: UserView(userId: comment.user.id)) {
+                                                                        ProfilePic(imageURL: comment.user.avatarImage.display, initials: comment.user.initials)
                                                                     }
-                                                                    Text("\(comment.body)")
-                                                                        .foregroundStyle(Color("text-primary"))
+                                                                    .simultaneousGesture(TapGesture().onEnded{
+                                                                        AddUserToRabbitHole(user: comment.user)
+                                                                    })
+                                                                    
+                                                                    VStack(alignment: .leading, spacing: 4) {
+                                                                        HStack {
+                                                                            NavigationLink(destination: UserView(userId: comment.user.id)) {
+                                                                                Text("\(comment.user.fullName)")
+                                                                                    .foregroundStyle(Color("text-primary"))
+                                                                                    .fontDesign(.rounded)
+                                                                                    .fontWeight(.medium)
+                                                                            }
+                                                                            .simultaneousGesture(TapGesture().onEnded{
+                                                                                AddUserToRabbitHole(user: comment.user)
+                                                                            })
+                                                                            Spacer()
+                                                                            Text("\(relativeTime(comment.createdAt))")
+                                                                                .foregroundStyle(Color("surface-text-secondary"))
+                                                                                .font(.system(size: 14))
+                                                                        }
+                                                                        Text("\(comment.body)")
+                                                                            .foregroundStyle(Color("text-primary"))
+                                                                    }
+                                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                                    .font(.system(size: 15))
                                                                 }
-                                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                                                .font(.system(size: 15))
                                                             }
                                                         }
                                                     }
                                                 }
+                                                .padding(.top, 12)
                                             }
-                                            .padding(.top, 12)
+                                        case .error(let message):
+                                            Text("Error: \(message)")
+                                                .foregroundStyle(Color.red)
+                                                .padding()
                                         }
                                     }
                                 }
@@ -434,8 +449,7 @@ struct SingleBlockView: View {
                     }
                     .onChange(of: showInfoModal) { _, _ in
                         if showInfoModal {
-                            fetchConnectionsData()
-                            fetchCommentsData()
+                            fetchConnectionsAndComments()
                         }
                     }
                 }
@@ -452,17 +466,42 @@ struct SingleBlockView: View {
         .contentMargins(.top, 16)
     }
     
-    private func fetchConnectionsData() {
-        isLoadingBlockConnectionsComments = true
-        connectionsViewModel.fetchBlockConnections(blockId: block.id) { success in
-            isLoadingBlockConnectionsComments = false
+    private func fetchConnectionsAndComments() {
+        Task {
+            await loadConnectionsAndComments()
         }
     }
     
-    private func fetchCommentsData() {
-        isLoadingBlockConnectionsComments = true
-        commentsViewModel.fetchBlockComments(blockId: block.id) { success in
-            isLoadingBlockConnectionsComments = false
+    @MainActor
+    private func loadConnectionsAndComments() async {
+        viewState = .loading
+        
+        do {
+            // Fetch connections and comments in parallel
+            async let connectionsResult = services.api.fetchBlockConnections(id: block.id)
+            async let commentsResult = fetchAllComments(blockId: block.id)
+            
+            let connections = try await connectionsResult.connections
+            let comments = try await commentsResult
+            
+            viewState = .loaded(connections: connections, comments: comments)
+        } catch {
+            viewState = .error(error.localizedDescription)
         }
+    }
+    
+    private func fetchAllComments(blockId: Int) async throws -> [BlockComment] {
+        var allComments: [BlockComment] = []
+        var currentPage = 1
+        var totalPages = 1
+        
+        repeat {
+            let result = try await services.api.fetchBlockComments(id: blockId, page: currentPage)
+            allComments.append(contentsOf: result.comments)
+            totalPages = Int(ceil(Double(result.length) / Double(20)))
+            currentPage += 1
+        } while currentPage <= totalPages
+        
+        return allComments.reversed()
     }
 }
